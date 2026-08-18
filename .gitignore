@@ -1,0 +1,16 @@
+# OAuth credentials and tokens - never commit these
+client_secrets.json
+token.json
+*.credentials.json
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
