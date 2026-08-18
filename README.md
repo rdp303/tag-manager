@@ -1,64 +1,76 @@
 # Programmatic Google Tag Manager
 
-A Python CLI for safely managing Google Tag Manager tags at scale. Filter tags by name, type, pause state, consent status, folder, or tag ID, then bulk-update matching tags without clicking through the GTM UI one-by-one.
+Python tooling for managing and auditing Google Tag Manager containers at scale.
 
-The main use case is **programmatic consent management**, but the same tool can also pause/unpause tags, change firing options, and update notes.
+The project has two pieces:
+
+- **`gtm_manager.py`** — filter tags and safely bulk-update consent settings, pause state, firing options, or notes.
+- **`audit.py`** — audit tags and triggers against YAML governance policies, detect configuration drift, and optionally remediate safe tag-level violations.
+
+Both tools use the official Google Tag Manager API v2. Writes are **dry-run by default**.
 
 ## Why this exists
 
-Large GTM containers often contain dozens or hundreds of tags. Changes such as adding a new consent requirement to every advertising tag are repetitive and easy to apply inconsistently by hand.
+Large GTM containers accumulate dozens or hundreds of tags and triggers. Changes such as adding consent requirements, standardizing firing behavior, or checking whether every advertising tag uses the same trigger logic are repetitive and easy to apply inconsistently by hand.
 
-This tool turns that work into a reviewable workflow:
+This toolkit turns that work into a reviewable workflow:
 
-1. Select a GTM account/container/workspace.
-2. Filter tags using multiple criteria.
-3. Preview the exact tags and fields that would change.
-4. Re-run with `--execute` only after validating the dry-run.
+1. Pull the current workspace configuration from GTM.
+2. Select tags using explicit criteria or policy rules.
+3. Show exact changes or audit findings.
+4. Require an explicit flag before writing anything.
+5. Leave versioning and publishing in GTM for human review.
 
 ## Features
 
-- OAuth 2.0 authentication against the official Google Tag Manager API v2
-- Case-insensitive name substring and regex filters
-- Filters for tag type, pause state, consent status, parent folder, and exact tag IDs
-- Bulk consent updates using GTM's native `consentSettings`
-- Bulk pause/unpause
-- Bulk firing-option updates
-- Replace or append tag notes
+### Bulk tag management
+
+- OAuth 2.0 authentication against the GTM API v2
+- Filters for tag name, regex, type, pause state, consent status, folder, and tag ID
+- Bulk updates for GTM `consentSettings`
+- Pause/unpause tags
+- Change tag firing options
+- Replace or append notes
 - Pagination across large workspaces
-- **Dry-run by default**
-- `--max-updates` safety cap for write operations
-- Fingerprint-based updates for optimistic concurrency protection
-- Unit tests for filtering and mutation logic
+- Dry-run by default
+- Write caps with `--max-updates`
+- Fingerprint-based optimistic concurrency protection
 
-## Supported consent settings
+### Policy auditing
 
-The GTM API exposes three manual consent states:
-
-- `notSet` — no manual additional-consent setting
-- `notNeeded` — no additional consent is required
-- `needed` — require one or more consent types before the tag fires
-
-When using `needed`, pass one or more consent types such as `ad_storage`, `analytics_storage`, `ad_user_data`, or `ad_personalization` according to your implementation.
+- YAML-based governance policies
+- Identify advertising/marketing tags using naming rules
+- Require standard consent configuration
+- Require consistent firing options and pause state
+- Validate allowed firing-trigger types
+- Require a specific blocking trigger or blocking-trigger naming pattern
+- Validate firing-trigger naming conventions
+- Compare trigger definitions and flag **configuration drift**
+- Detect behaviorally equivalent duplicate triggers
+- Optionally identify orphan triggers
+- JSON output for CI/reporting
+- Configurable exit codes with `--fail-on`
+- Safe tag-level remediation with `--fix`
 
 ## Setup
 
 ### 1. Create Google Cloud credentials
 
-Enable the **Google Tag Manager API** in a Google Cloud project and create an OAuth 2.0 **Desktop app** credential. Download the JSON credential and save it locally as:
+Enable the **Google Tag Manager API** in a Google Cloud project and create an OAuth 2.0 **Desktop app** credential. Download it as:
 
 ```text
 client_secrets.json
 ```
 
-Do not commit this file. It is ignored by `.gitignore`.
+Do not commit it. The file is ignored by `.gitignore`.
 
-The tool requests this GTM OAuth scope:
+The toolkit requests:
 
 ```text
 https://www.googleapis.com/auth/tagmanager.edit.containers
 ```
 
-The Google account completing OAuth must also have sufficient access to the GTM account/container you want to edit.
+The Google account completing OAuth must have access to the GTM account/container being managed.
 
 ### 2. Install dependencies
 
@@ -68,41 +80,33 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 3. Find your IDs
+### 3. Use GTM API IDs
 
-The CLI expects GTM's numeric API IDs, not the public `GTM-XXXXXXX` container ID:
+Commands use GTM's numeric API IDs:
 
 ```text
 accounts/{account_id}/containers/{container_id}/workspaces/{workspace_id}
 ```
 
-You can see these IDs in GTM API responses/URLs. The first authenticated run opens a browser for Google OAuth and stores the refreshable token locally in `token.json`.
+The first authenticated run opens a browser for OAuth and stores the refreshable token locally in `token.json`.
 
-## Examples
+---
 
-### Inspect tags before touching anything
+# Bulk tag management
 
-```bash
-python gtm_manager.py list \
-  --account-id 123456 \
-  --container-id 987654 \
-  --workspace-id 12
-```
-
-### Find all Custom HTML advertising tags
+## List matching tags
 
 ```bash
 python gtm_manager.py list \
   --account-id 123456 \
   --container-id 987654 \
   --workspace-id 12 \
-  --type html \
   --name-regex 'meta|facebook|tiktok|linkedin'
 ```
 
-### Require ad consent for every matching advertising tag
+## Require advertising consent
 
-This is a **dry-run**. It prints the exact planned changes but writes nothing:
+Dry-run:
 
 ```bash
 python gtm_manager.py update \
@@ -115,7 +119,7 @@ python gtm_manager.py update \
   --consent-type ad_user_data
 ```
 
-After reviewing the output, execute the same change:
+Apply after reviewing the output:
 
 ```bash
 python gtm_manager.py update \
@@ -129,117 +133,189 @@ python gtm_manager.py update \
   --execute
 ```
 
-### Only change tags that currently have no manual consent setting
-
-```bash
-python gtm_manager.py update \
-  --account-id 123456 \
-  --container-id 987654 \
-  --workspace-id 12 \
-  --consent-status notSet \
-  --name-contains pixel \
-  --set-consent-status needed \
-  --consent-type ad_storage
-```
-
-### Pause every tag in a folder
-
-```bash
-python gtm_manager.py update \
-  --account-id 123456 \
-  --container-id 987654 \
-  --workspace-id 12 \
-  --folder-id 55 \
-  --set-paused true
-```
-
-### Update only specific tag IDs
-
-```bash
-python gtm_manager.py update \
-  --account-id 123456 \
-  --container-id 987654 \
-  --workspace-id 12 \
-  --tag-id 14 \
-  --tag-id 18 \
-  --append-note 'Consent reviewed programmatically' \
-  --execute
-```
-
-## Safety model
-
-The script intentionally makes bulk writes harder than reads:
-
-- `update` is a dry-run unless `--execute` is supplied.
-- Writes are capped at 50 tags by default. Change the cap with `--max-updates`.
-- Each update sends the tag's current fingerprint so GTM can reject a write if the entity changed after it was read.
-- OAuth client secrets and cached tokens are ignored by Git.
-- The tool updates the selected **workspace**; it does not automatically create a container version or publish it.
-
-That last point is intentional: review the workspace changes in GTM before versioning/publishing.
-
-## CLI reference
-
-```bash
-python gtm_manager.py --help
-python gtm_manager.py list --help
-python gtm_manager.py update --help
-```
-
-Filters can be combined. A tag must satisfy **all** supplied filters.
-
-### Filter options
+Other supported update actions include:
 
 ```text
---name-contains TEXT
---name-regex REGEX
---type TYPE
---paused true|false
---consent-status needed|notNeeded|notSet
---folder-id ID
---tag-id ID                 # repeatable
-```
-
-### Update options
-
-```text
---set-consent-status needed|notNeeded|notSet
---consent-type TYPE         # repeatable; used with needed
 --set-paused true|false
 --set-firing-option unlimited|oncePerEvent|oncePerLoad|tagFiringOptionUnspecified
 --set-note TEXT
 --append-note TEXT
---max-updates N
---execute
+```
+
+---
+
+# GTM policy auditor
+
+The auditor compares workspace tags and triggers against rules defined in YAML.
+
+The included `policies/advertising.yaml` demonstrates two useful policy groups:
+
+- all advertising tags must have standard consent/firing settings
+- advertising purchase tags should use equivalent purchase-trigger logic
+
+## Example policy
+
+```yaml
+policies:
+  advertising:
+    match:
+      tag_name_regex: "(google ads|meta|facebook|tiktok|linkedin)"
+    require:
+      consent_status: needed
+      consent_types:
+        - ad_storage
+        - ad_user_data
+      paused: false
+      firing_option: oncePerEvent
+    triggers:
+      allowed_types:
+        - pageview
+        - customEvent
+        - click
+        - linkClick
+        - formSubmission
+
+  advertising_purchase:
+    match:
+      tag_name_regex: "(google ads|meta|facebook|tiktok|linkedin).*(purchase|transaction)"
+    triggers:
+      firing_trigger_name_regex: "(purchase|transaction)"
+      require_equivalent_firing_triggers: true
+```
+
+## Run an audit
+
+```bash
+python audit.py \
+  --account-id 123456 \
+  --container-id 987654 \
+  --workspace-id 12 \
+  --policy policies/advertising.yaml
+```
+
+Example output:
+
+```text
+GTM POLICY AUDIT
+========================================================================
+advertising: 18 tag(s) inspected
+advertising_purchase: 4 tag(s) inspected
+
+ERROR CONSENT_TYPES             LinkedIn - Purchase [fixable]
+      policy=advertising | consent types differ from policy (missing=ad_user_data)
+WARN  TRIGGER_DRIFT             advertising_purchase
+      policy=advertising_purchase | matched tags use 2 distinct firing-trigger configurations
+WARN  DUPLICATE_TRIGGER         Lead Submit / Lead Submit v2
+      policy=global | behaviorally equivalent trigger definitions detected
+```
+
+## Trigger drift detection
+
+GTM tags reference firing and blocking triggers by ID. The auditor retrieves the full trigger objects and builds a normalized signature from behaviorally relevant fields such as:
+
+- trigger event type
+- regular filters
+- custom-event filters
+- auto-event filters
+- wait-for-tags settings
+- validation settings
+- timeout/timer/scroll parameters when present
+
+Trigger names and IDs are intentionally excluded from the signature. That means two differently named triggers with the same logic are recognized as equivalent, while a subtle filter difference is flagged as drift.
+
+This is useful for questions such as:
+
+> Do all advertising purchase tags actually fire on the same purchase logic, or has one platform quietly drifted to a slightly different trigger?
+
+## Safe remediation
+
+The auditor can build a remediation plan for tag-level violations:
+
+```bash
+python audit.py \
+  --account-id 123456 \
+  --container-id 987654 \
+  --workspace-id 12 \
+  --policy policies/advertising.yaml \
+  --fix
+```
+
+That is still a dry-run. Apply safe fixes with:
+
+```bash
+python audit.py \
+  --account-id 123456 \
+  --container-id 987654 \
+  --workspace-id 12 \
+  --policy policies/advertising.yaml \
+  --fix \
+  --execute
+```
+
+Automatic remediation is intentionally limited to safer tag-level changes:
+
+- consent settings
+- pause state
+- firing option
+- adding one uniquely resolved required blocking trigger
+
+The tool **does not automatically rewrite trigger conditions** when drift is found. Trigger logic is surfaced for review rather than silently changed.
+
+## CI / machine-readable audits
+
+Emit JSON:
+
+```bash
+python audit.py ... --json
+```
+
+Control exit behavior:
+
+```text
+--fail-on error   # default
+--fail-on warn
+--fail-on never
+```
+
+This makes it possible to run a GTM governance audit as part of a scheduled job or CI workflow.
+
+## Repository structure
+
+```text
+.
+├── gtm_manager.py
+├── audit.py
+├── policies/
+│   └── advertising.yaml
+├── examples/
+├── tests/
+│   ├── test_gtm_manager.py
+│   └── test_audit.py
+├── .github/workflows/test.yml
+├── requirements.txt
+└── README.md
 ```
 
 ## Tests
-
-The filtering/mutation logic is separated from the Google API calls so it can be tested without GTM credentials:
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-## Architecture
+The core filtering, mutation, policy, and trigger-signature logic is testable without live GTM credentials.
 
-```text
-OAuth 2.0
-   |
-   v
-Google Tag Manager API v2
-   |
-   +--> list workspace tags (paginated)
-   |
-   +--> apply AND-based filters
-   |
-   +--> build mutation plan
-   |
-   +--> dry-run output
-   |
-   +--> tags.update(path, body, fingerprint)  [only with --execute]
-```
+## Safety model
+
+- Reads and audits do not modify GTM.
+- Bulk updates are dry-run unless `--execute` is supplied.
+- Audit remediation requires both `--fix` and `--execute`.
+- Writes are capped at 50 tags by default.
+- Tag updates use GTM fingerprints for optimistic concurrency protection.
+- OAuth client secrets and token caches are excluded from Git.
+- The tools modify the selected **workspace only**; they do not automatically create a container version or publish it.
+
+Review changes in GTM Preview and the workspace UI before publishing production changes.
 
 ## Important
 
-This tool changes GTM configuration, not a website's consent state directly. `consentSettings` controls the additional consent checks configured for individual GTM tags. Validate your Consent Mode/CMP implementation and preview the GTM workspace before publishing production changes.
+This project manages GTM configuration. It does not replace a consent management platform or determine legal consent requirements. `consentSettings` controls additional consent checks configured for GTM tags; your Consent Mode and CMP implementation should be validated separately.

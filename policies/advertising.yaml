@@ -1,0 +1,38 @@
+# Example governance policy for advertising/marketing tags.
+#
+# Policies are explicit because different conversion types may legitimately use
+# different triggers. Only enable equivalence checks for groups that truly
+# should behave the same.
+
+policies:
+  advertising:
+    match:
+      tag_name_regex: "(google ads|meta|facebook|tiktok|linkedin|pinterest|snap)"
+    require:
+      consent_status: needed
+      consent_types:
+        - ad_storage
+        - ad_user_data
+      paused: false
+      firing_option: oncePerEvent
+    triggers:
+      allowed_types:
+        - pageview
+        - customEvent
+        - click
+        - linkClick
+        - formSubmission
+      # Uncomment if your container uses a standard advertising exception:
+      # required_blocking_trigger_regex: "^Consent - Advertising"
+
+  advertising_purchase:
+    match:
+      tag_name_regex: "(google ads|meta|facebook|tiktok|linkedin|pinterest|snap).*(purchase|transaction|order)"
+    triggers:
+      firing_trigger_name_regex: "(purchase|transaction|order)"
+      # These tags should use behaviorally equivalent purchase trigger logic.
+      require_equivalent_firing_triggers: true
+
+global_checks:
+  duplicate_triggers: true
+  orphan_triggers: false
